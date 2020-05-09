@@ -1,0 +1,24 @@
+ESTIMATE of time to complete assignment: 32 hours
+
+      Time     Time
+Date  Started  Spent Work completed
+----  -------  ----  --------------
+10/20 7:00pm   0:30  skimmed assignment.
+                     
+10/21 9:00pm   3:30  thoroughly read through assignment, drafted code for first half of track ADT program
+
+10/22 8:00pm   4:00  continued work on first half of ADT, read through merge. could not figure out makefile, and thus could not test any of the drafted code
+
+10/23 10:00pm  3:00  drafted merge, fixed makefile. passed first 2 public tests, began regressive journey to correct previously uncheckable work
+
+10/24 5:00pm   12:00 passed all public tests except heatmap and heatmap.c
+
+10/25 1:30pm   5:00  debugged further, completed heatmap implementation and surmounted stubborn segfaults
+
+10/25 8:00pm   4:00  couldn't figure out how to fix my 3 failed public test cases; submitted
+               ----
+               32:00 TOTAL time spent
+
+I discussed my solution with David McCowin, Daly Joseph, Kevin Rono, Alina Kramp, Beamlak Ashenafi, and Jun Park.
+
+The main obstacle I ran into with this problem set was the fact that my makefile wasn't working for the longest time. Although I went to office hours Monday and Tuesday night as well, it wasn't until Wednesday night that a ULA was able to help me fix it. (Perhaps there should be more ULAs stationed at the OH; I know this is a common issue among the students of 223, going to OH but not getting the proper attention because of an understaffed help team.) The problem up ended being a simple fix –– all I had to do was place a "return;" statement as a placeholder in my track_heatmap function, and the track.c file was able to compile –– but my inability to produce a working makefile up until that point eliminated ongoing testing as an option. Consequently, I spent a ton of time debugging flawed code that I had previously written but could not correct, as opposed to checking as I went. Once I had that makefile up and running, however, it felt a lot more like smooth sailing. I was getting segfaults and double free errors galore, of course, but all was fixable using valgrind and parsing through my code manually to look for places I'd accessed inaccessible memory or freed the same memory address multiple times. As I finished, I could not pass two merge cases (even though my merge function works) because of a double free error. I looked in my track_destroy and could not find the source of the error. Furthermore, I could not deduce the source of my singular Valgrind error, and after hours of looking, could not find it. Giving up is extremely frustrating, and I wish there was more help available to students because we don't always know how to fix random errors like these that we have never encountered before. I came to OH two hours early today and was helped for a total of five minutes.

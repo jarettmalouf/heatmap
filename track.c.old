@@ -1,0 +1,643 @@
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <ctype.h>
+#include <stdbool.h>
+#include <string.h>
+#include <float.h>
+
+#include "track.h"
+#include "trackpoint.h"
+#include "location.h"
+
+typedef struct segment
+{
+	int seg_count;
+	int seg_capacity;
+	trackpoint **trkpt_ptr_ptr;
+	double seg_length;
+} segment; 
+
+typedef struct track
+{
+	segment *seg_ptr;
+	int count;
+	int capacity;
+	trackpoint *end_trkpt;
+} trk;
+
+void print_track(track *trk)
+{
+	printf("TRACK\n");
+	printf("count = %d\t", trk->count);
+	printf("capacity = %d\n", trk->capacity);
+	printf("SEGMENTS\n");
+	for (int i = 0; i < trk->count; i++)
+	{
+		printf("segment %d\n\t", i);
+		printf("seg_count = %d\t", trk->seg_ptr[i].seg_count);
+		printf("seg_capacity = %d\n", trk->seg_ptr[i].seg_capacity);
+		for (int j = 0; j < trk->seg_ptr[i].seg_count; j++)
+		{
+			printf("\tTrackpoint %d:\n\t\t", j);
+			printf("lat: %lf\t", trackpoint_location(trk->seg_ptr[i].trkpt_ptr_ptr[j]).lat);
+			printf("lon: %lf\t", trackpoint_location(trk->seg_ptr[i].trkpt_ptr_ptr[j]).lon);
+			printf("time: %ld\n", trackpoint_time(trk->seg_ptr[i].trkpt_ptr_ptr[j]));
+		}
+	}
+}
+
+/**
+ * Creates a track with one empty segment.
+ *
+ * @return a pointer to the new track, or NULL if there was an allocation error
+ */
+track *track_create()
+{
+	track *trk = malloc(sizeof(track));
+	if (trk != NULL)
+	{
+		trk->count = 1;
+		trk->capacity = 1;
+		trk->end_trkpt = NULL;
+		trk->seg_ptr = malloc(sizeof(segment));
+		if (trk->seg_ptr != NULL)
+		{
+			trk->seg_ptr->seg_count = 0;
+			trk->seg_ptr->seg_capacity = 1;
+			trk->seg_ptr->trkpt_ptr_ptr = calloc(trk->seg_ptr->seg_capacity, sizeof(trackpoint*));
+			if (trk->seg_ptr->trkpt_ptr_ptr != NULL)
+			{
+				return trk;
+			}
+		}
+	}
+	return NULL;
+}
+
+/**
+ * Destroys the given track, releasing all memory held by it.
+ *
+ * @param trk a pointer to a valid track
+ */
+void track_destroy(track *trk)
+{
+	if (trk != NULL)
+	{
+		for (int i = 0; i < trk->count; i++)
+		{
+			for (int j = 0; j < trk->seg_ptr[i].seg_count; j++)
+			{
+				trackpoint_destroy(trk->seg_ptr[i].trkpt_ptr_ptr[j]);
+			}
+			free(trk->seg_ptr[i].trkpt_ptr_ptr);			
+		}
+		free(trk->seg_ptr);
+		free(trk);
+	}	
+}
+
+/**
+ * Returns the number of segments in the given track.
+ *
+ * @param trk a pointer to a valid track
+ */
+int track_count_segments(const track *trk)
+{
+	return trk->count;
+}
+
+/**
+ * Returns the number of trackpoints in the given segment of the given
+ * track.  The segment is specified by a 0-based index.  The return
+ * value is 0 if the segment index is invalid.
+ *
+ * @param trk a pointer to a valid track
+ * @param i a nonnegative integer less than the number of segments in trk
+ * @return the number of trackpoints in the corresponding segment
+ */
+int track_count_points(const track *trk, int i)
+{
+	if (i >= trk->count)
+	{
+		return 0;
+	}
+	else
+	{
+		return trk->seg_ptr[i].seg_count;
+	}
+}
+
+/**
+ * Returns a copy of the given point in this track.  The segment is
+ * specified as a 0-based index, and the point within the segment is
+ * specified as a 0-based index into the corresponding segment.  The
+ * return value is NULL if either index is invalid or if there is a memory
+ * allocation error.  It is the caller's responsibility to destroy the
+ * returned trackpoint.
+ *
+ * @param trk a pointer to a valid track
+ * @param i a nonnegative integer less than the number of segments in trk
+ * @param j a nonnegative integer less than the number of points in segment i
+ * of track trk
+ */
+trackpoint *track_get_point(const track *trk, int i, int j)
+{
+	if (i < 0 || j < 0 || trk == NULL)
+	{
+		return NULL;
+	}
+
+	if (i < trk->count)
+	{
+		if (j < trk->seg_ptr[i].seg_count)
+		{
+			return trackpoint_copy(trk->seg_ptr[i].trkpt_ptr_ptr[j]);
+		}
+	}
+	return NULL;
+}
+
+/**
+ * Returns an array containing the length of each segment in this track.
+ * The length of a segment is the sum of the distances between each point
+ * in it and the next point.  The length of a segment with fewer than two
+ * points is zero.  If there is a memory allocation error then the returned
+ * pointer is NULL.  It is the caller's responsibility to free the returned
+ * array.
+ *
+ * @param trk a pointer to a valid track
+ */
+double segment_get_length(segment seg)
+{
+	double len = 0.0;
+	if (seg.seg_count < 2)
+	{
+		return len;
+	}
+	for (int i = 0; i < seg.seg_count - 1; i++)
+	{
+		location loc1 = trackpoint_location(seg.trkpt_ptr_ptr[i]);
+		location loc2 = trackpoint_location(seg.trkpt_ptr_ptr[i+1]);
+		len += location_distance(&loc1, &loc2);
+	}
+	return len;
+}
+
+double *track_get_lengths(const track *trk)
+{
+	double *lens = calloc(trk->count, sizeof(double));
+	if (lens != NULL)
+	{
+		for (int i = 0; i < trk->count; i++)
+		{
+			lens[i] = segment_get_length(trk->seg_ptr[i]);
+		}
+		return lens;
+	}
+	return NULL;
+}
+
+
+/**
+ * Adds a copy of the given point to the last segment in this track.
+ * The point is not added and there is no change to the track if there
+ * is a last point in the track (the last point in the current segment
+ * or the last point on the previous segment if the current segment
+ * is empty) and the timestamp on the new point is
+ * not strictly after the timestamp on the last point.  There is no
+ * effect if there is a memory allocation error.  The return value
+ * indicates whether the point was added.  This function must execute
+ * in amortized O(1) time (so a sequence of n consecutive operations must
+ * work in worst-case O(n) time).
+ *
+ * @param trk a pointer to a valid track
+ * @param pt a trackpoint with a timestamp strictly after the last trackpoint
+ * in the last segment in this track (if there is such a point)
+ * @return true if and only if the point was added
+ */
+bool track_add_point(track *trk, const trackpoint *pt)
+{
+	// adds first point
+	if (trk->seg_ptr[0].seg_count == 0)
+	{
+		trk->seg_ptr[0].trkpt_ptr_ptr[0] = trackpoint_copy(pt);
+		trk->seg_ptr[0].seg_count++;
+		trk->end_trkpt = trk->seg_ptr[0].trkpt_ptr_ptr[0];
+		return true;
+	}
+
+	// trk->seg_ptr[trk->count - 1]->trkpt_ptr_ptr[trk->seg_ptr[trk->count - 1]->seg_count - 1] = current trk->end_trkpt
+
+	// if last valid segment has room for pt
+	// and if pt is newer than the final trackpoint
+	// add pt to the end of final segment and return true
+	// else return false
+	if (trk->seg_ptr[trk->count - 1].seg_count < trk->seg_ptr[trk->count - 1].seg_capacity)
+	{
+		if (trackpoint_time(pt) > trackpoint_time(trk->end_trkpt))
+		{
+			// setting pt as last element of last segment; setting end_trkpt to pt
+			trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr[trk->seg_ptr[trk->count - 1].seg_count] = trackpoint_copy(pt);
+			trk->end_trkpt = trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr[trk->seg_ptr[trk->count - 1].seg_count];
+			
+			trk->seg_ptr[trk->count - 1].seg_count++;
+
+			if (trk->seg_ptr[trk->count - 1].seg_count > 1)
+			{
+				location loc1 = trackpoint_location(trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr[trk->seg_ptr[trk->count - 1].seg_count - 2]);
+				location loc2 = trackpoint_location(trk->end_trkpt);
+				trk->seg_ptr[trk->count - 1].seg_length += location_distance(&loc1, &loc2);
+			}
+			
+
+			return true;
+		}
+		return false;
+	}
+
+	// if last segment has stuff in it but there is no room for pt
+	// (trk->seg_ptr[trk->count - 1]->seg_count = trk->seg_ptr[trk->count - 1]->seg_capacity)
+	// if pt is newer than the last trkpt in last element 
+	// reallocate space by doubling the trkpt_ptr_ptr array size
+	// if there is an error here, return false
+	// else return false
+	else if (trk->seg_ptr[trk->count - 1].seg_count == trk->seg_ptr[trk->count - 1].seg_capacity)
+	{
+		// last valid trackpoint is in last segment, and is older than pt
+		if (trackpoint_time(pt) > trackpoint_time(trk->end_trkpt))
+		{
+			trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr = realloc(trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr, 
+																	2 * trk->seg_ptr[trk->count - 1].seg_capacity * sizeof(trackpoint*));
+			if (trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr != NULL)
+			{
+				trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr[trk->seg_ptr[trk->count - 1].seg_capacity] = trackpoint_copy(pt);
+				trk->end_trkpt = trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr[trk->seg_ptr[trk->count - 1].seg_capacity];
+				
+				trk->seg_ptr[trk->count - 1].seg_count++;
+
+				if (trk->seg_ptr[trk->count - 1].seg_count > 1)
+				{
+					location loc1 = trackpoint_location(trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr[trk->seg_ptr[trk->count - 1].seg_count - 2]);
+					location loc2 = trackpoint_location(trk->end_trkpt);
+					trk->seg_ptr[trk->count - 1].seg_length += location_distance(&loc1, &loc2);
+				}
+
+				trk->seg_ptr[trk->count - 1].seg_capacity *= 2;
+
+				return true;
+			}
+			return false;
+		}
+
+		// pt is older
+		return false;
+	}
+
+	// jic
+	return false;
+}
+
+/**
+ * Starts a new segment in the given track.  There is no effect on the track
+ * if the current segment is empty or if there is a memory allocation error.
+ *
+ * @param trk a pointer to a valid track
+ */
+void track_start_segment(track *trk)
+{
+	// if final trkpt  is in final segment
+	// add new empty segment to the end
+	if (trk != NULL && trk->seg_ptr[trk->count - 1].seg_count > 0 &&
+		trk->seg_ptr[trk->count - 1].trkpt_ptr_ptr[trk->seg_ptr[trk->count - 1].seg_count - 1] == trk->end_trkpt)
+	{
+		if (trk->count == trk->capacity)
+		{
+			trk->seg_ptr = realloc(trk->seg_ptr, 2 * trk->capacity * sizeof(segment));
+			trk->seg_ptr[trk->capacity].seg_count = 0;
+			trk->seg_ptr[trk->capacity].seg_capacity = 1;
+			trk->seg_ptr[trk->capacity].trkpt_ptr_ptr = malloc(sizeof(trackpoint*));
+			trk->capacity *= 2;
+		}
+		else
+		{
+			trk->seg_ptr[trk->count].seg_count = 0;
+			trk->seg_ptr[trk->count].seg_capacity = 1;
+			trk->seg_ptr[trk->count].seg_length = 0;
+			trk->seg_ptr[trk->count].trkpt_ptr_ptr = malloc(sizeof(trackpoint*));
+		}
+		trk->count++;
+	}
+	// if final trkpt is not in final segment (final segment is empty)
+	// don't do shit
+}
+
+/**
+ * Merges the given range of segments in this track into one.  The segments
+ * to merge are specified as the 0-based index of the first segment to
+ * merge and one more than the index of the last segment to merge.
+ * The resulting segment replaces the first merged one and later segments
+ * are moved up to replace the other merged segments.  If the range is
+ * invalid then there is no effect.
+ *
+ * @param trk a pointer to a valid track
+ * @param start an integer greather than or equal to 0 and strictly less than
+ * the number if segments in trk
+ * @param end an integer greater than or equal to start and less than or
+ * equal to the number of segments in trk
+ */
+void track_merge_segments(track *trk, int start, int end)
+{
+	printf("START\n");
+	// print_track(trk);
+	if ((end > (start + 1)) && start >= 0 && trk!= NULL && start < trk->count && end <= trk->count)
+	{
+		// summing up the total number of trackpoints we'll have to merge	
+		// printf("We're in");	
+		int total_trkpts = 0;
+		int start_trkpts = trk->seg_ptr[start].seg_count;
+		for (int i = start; i < end; i++)
+		{
+			total_trkpts += trk->seg_ptr[i].seg_count;
+		}
+		
+		// reallocating space for all the trackpoints in the start's trkpt_ptr_ptr
+		trk->seg_ptr[start].trkpt_ptr_ptr = realloc(trk->seg_ptr[start].trkpt_ptr_ptr, total_trkpts * sizeof(trackpoint*));
+		trk->seg_ptr[start].seg_capacity = total_trkpts;
+
+
+		// merging them all into the start's trkpt_ptr_ptr		
+		int curr = start + 1;
+		int curr_len = trk->seg_ptr[curr].seg_count;
+		int count = 0;
+		for (int i = start_trkpts; i < total_trkpts; i++)
+		{
+			trk->seg_ptr[start].trkpt_ptr_ptr[i] = track_get_point(trk, curr, count);
+			count++;
+			trk->seg_ptr[start].seg_count++;
+
+			if (count == curr_len)
+			{
+				curr++;
+				count = 0;
+				curr_len = trk->seg_ptr[curr].seg_count;
+			}
+		}
+		printf("POST MERGE\n");
+		// print_track(trk);
+
+		// shifting
+		for (int i = end; i < trk->count; i++)
+		{
+			int d = i + 1 - end + start;
+			trk->seg_ptr[d].seg_count = trk->seg_ptr[i].seg_count;
+			if (trk->seg_ptr[d].seg_capacity < trk->seg_ptr[i].seg_capacity)
+			{
+				trk->seg_ptr[d].trkpt_ptr_ptr = 
+					realloc(trk->seg_ptr[d].trkpt_ptr_ptr, 
+						trk->seg_ptr[i].seg_capacity);
+				trk->seg_ptr[d].seg_capacity = trk->seg_ptr[i].seg_capacity;
+			}
+			for (int j = 0; j < trk->seg_ptr[i].seg_count; j++)
+			{
+				trk->seg_ptr[d].trkpt_ptr_ptr[j] = track_get_point(trk, i, j);
+			}
+			trk->seg_ptr[d].seg_count = trk->seg_ptr[i].seg_count;
+			trk->seg_ptr[i].seg_count = 0;
+		}
+		for (int k = trk->count - 1; k > start; k--)
+		{
+			if (trk->seg_ptr[k].seg_count == 0)
+			{
+				trk->seg_ptr[k].seg_capacity = 1;
+			}
+		}
+		trk->count -= (end - start - 1);
+		printf("POST SHIFT\n");
+		// print_track(trk);
+	}
+}
+
+
+/**
+ * Creates a heapmap of the given track.  The heatmap will be a
+ * rectangular 2-D array with each row separately allocated.  The last
+ * three paramters are (simulated) reference parameters used to return
+ * the heatmap and its dimensions.  Each element in the heatmap
+ * represents an area bounded by two circles of latitude and two
+ * meridians of longitude.  The circle of latitude bounding the top of
+ * the top row is the northernmost (highest) latitude of any
+ * trackpoint in the given track.  The meridian bounding the left of
+ * the first column is the western edge of the smallest spherical
+ * wedge bounded by two meridians the contains all the points in the
+ * track (the "western edge" for a nontrivial wedge being the one
+ * that, when you move east from it along the equator, you stay in the
+ * wedge).  When there are multiple such wedges, choose the one with
+ * the lowest normalized (adjusted to the range -180 (inclusive) to
+ * 180 (exclusive)) longitude.  The distance (in degrees) between the
+ * bounds of adjacent rows and columns is given by the last two
+ * parameters.  The heat map will have just enough rows and just
+ * enough columns so that all points in the track fall into some cell.
+ * The value in each entry in the heatmap is the number of trackpoints
+ * located in the corresponding cell.  If a trackpoint is on the
+ * border of two or more cells then it is counted in the bottommost
+ * and rightmost cell it is on the border of, but do not add a row or
+ * column just to place points on the south and east borders into
+ * them and instead place the points on those borders by breaking ties
+ * only between cells that already exist.
+ * If there are no trackpoints in the track then the function
+ * creates a 1x1 heatmap with the single element having a value of 0.
+ * If the cell size is invalid or if there is a memory allocation
+ * error then the map is set to NULL and the rows and columns
+ * parameters are unchanged.  It is the caller's responsibility to
+ * free each row in the returned array and the array itself.
+ *
+ * @param trk a pointer to a valid trackpoint
+ * @param cell_width a positive double less than or equal to 360.0
+ * @param cell_height a positive double less than or equal to 180.0
+ * @param map a pointer to a pointer to a 2-D array of ints
+ * @param rows a pointer to an int
+ * @param cols a pointer to an int
+ */
+void track_heatmap(const track *trk, double cell_width, double cell_height,
+		    int ***map, int *rows, int *cols)
+{
+	// 0 –– create an array of locations that consolidates all the locations of trkpts
+
+	if (trk == NULL || cell_width <= 0 || cell_height <= 0)
+	{
+		map = calloc(1, sizeof(int**));
+		map[0] = calloc(1, sizeof(int*));
+		map[0][0] = calloc(1, sizeof(int));
+		return;
+	}
+
+	int total_trkpts = 0;
+
+	for (int i = 0; i < trk->count; i++)
+	{
+		total_trkpts += trk->seg_ptr[i].seg_count;	
+	}
+
+	// printf("total = %d: ", total_trkpts);
+
+	location *locations = malloc(total_trkpts * sizeof(location));
+	int k = 0;
+	for (int i = 0; i < trk->count; i++)
+	{
+		for (int j = 0; j < trk->seg_ptr[i].seg_count; j++)
+		{
+			locations[k] = trackpoint_location(trk->seg_ptr[i].trkpt_ptr_ptr[j]);
+			// printf("Trackpoint %d: lat %lf lon %lf\n", k, locations[k].lat, locations[k].lon);
+			k++;
+		}
+	}
+
+	// 1 –– create array of wedges
+
+	double max_dist = 0;
+	int max_reach = 0;
+	double min_wedge_dist = DBL_MAX;
+	int min_wedge_base, min_wedge_reach;
+
+	for (int i = 0; i < total_trkpts; i++)
+	{
+		max_dist = 0;
+		max_reach = 0;
+		for (int j = 0; j < total_trkpts; j++)
+		{
+			if (i != j)	
+			{
+				// printf("i = %d, j = %d\n", i, j);
+				if (locations[i].lon <= locations[j].lon)
+				{
+					if (locations[j].lon - locations[i].lon > max_dist)
+					{
+						max_dist = locations[j].lon - locations[i].lon;
+						max_reach = j;
+					}
+				}
+				else
+				{
+					if (locations[j].lon - locations[i].lon + 360.0 > max_dist)
+					{
+						max_dist = locations[j].lon - locations[i].lon + 360.0;
+						max_reach = j;
+					}
+				}
+				// printf("max_dist = %lf, max_reach = %d\n", max_dist, max_reach);
+			}
+		}
+		if (max_dist < min_wedge_dist)
+		{
+			min_wedge_dist = max_dist;
+			min_wedge_base = i;
+			min_wedge_reach = max_reach;
+		}
+	}
+	// printf("min wedge: base = %d, reach = %d, dist = %lf\n", min_wedge_base, min_wedge_reach, min_wedge_dist);
+
+	// 2 –– determine dimensions of grid (num horizontal cells x num vertical cells)
+
+	int num_horizontal_cells = ceil(min_wedge_dist / cell_width);
+
+	double nmost_lat = locations[0].lat;
+	double smost_lat = locations[0].lat;
+
+	for (int i = 1; i < total_trkpts; i++)
+	{
+		if (locations[i].lat > nmost_lat)
+		{
+			nmost_lat = locations[i].lat;
+		}
+		if (locations[i].lat < smost_lat)
+		{
+			smost_lat = locations[i].lat;
+		}
+	}
+
+	double map_height = nmost_lat - smost_lat;
+	int num_vertical_cells = ceil(map_height / cell_height);
+
+	*rows = num_vertical_cells;
+	*cols = num_horizontal_cells;
+
+	// printf("cell width: %lf, cell height: %lf\n", cell_width, cell_height);
+	// printf("nmost: %d %lf, smost: %d %lf\n", nmost_lat, smost_lat);
+	// printf("dimensions: hor %d, vert %d\n", num_horizontal_cells, num_vertical_cells);
+
+
+	// 3 –– instantiate empty map
+
+	int **map_copy = malloc(*rows * sizeof(int*));
+	if (map != NULL)
+	{
+		for (int i = 0; i < *rows; i++)
+		{
+			map_copy[i] = calloc(*cols, sizeof(int));
+			if (map_copy[i] == NULL)
+			{
+				map = NULL;
+				return;
+			}
+		}
+	}
+	else
+	{
+		map = NULL;
+		return;
+	}
+
+	// for (int i = 0; i < *rows; i++)
+	// {
+	// 	for (int j = 0; j < *cols; j++)
+	// 	{
+	// 		printf("%d\t", map_copy[i][j]);
+	// 	}
+	// 	printf("\n");
+	// }
+
+	// 4 –– fill in map
+
+	for (int i = 0; i < total_trkpts; i++)
+	{
+		int lat_cell, lon_cell;
+		if (locations[i].lat == smost_lat)
+		{
+			lat_cell = *rows - 1;
+		}
+		else
+		{
+			lat_cell = floor((nmost_lat - locations[i].lat) / cell_height);
+		}
+		
+		if (locations[i].lon == locations[min_wedge_reach].lon)
+		{
+			lon_cell = *cols - 1;
+		}
+		else
+		{
+			lon_cell = floor((locations[i].lon - locations[min_wedge_base].lon) / cell_width);
+		}
+		// printf("%d lat_cell: %d, lon_cell: %d\n", i, lat_cell, lon_cell);
+		map_copy[lat_cell][lon_cell]++;
+	}
+
+	// for (int i = 0; i < *rows; i++)
+	// {
+	// 	for (int j = 0; j < *cols; j++)
+	// 	{
+	// 		printf("%d\t", map_copy[i][j]);
+	// 	}
+	// 	printf("\n");
+	// }
+
+	*map = map_copy;
+	free(locations);
+}
+
+
+
+
+
